@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+sound_assistant.db
+node_modules/
+.mypy_cache/
+.DS_Store

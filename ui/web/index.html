@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sound Assistant</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Sound Assistant</h1>
+    <span id="conn-status" class="badge">connecting...</span>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Source</h2>
+      <div id="sources" class="list"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Destinations</h2>
+      <div id="destinations" class="list"></div>
+      <button id="route-btn" disabled>ROUTE</button>
+      <p id="route-error" class="error"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Current routes</h2>
+      <div id="routes" class="list"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
