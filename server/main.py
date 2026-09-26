@@ -26,7 +26,7 @@ from server.ws import manager
 
 logging.basicConfig(level=logging.INFO)
 
-UI_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "web")
+UI_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "web", "dist")
 
 
 def build_transport() -> AudioTransport:

@@ -13,8 +13,21 @@ python -m venv .venv
 .venv\Scripts\python -m uvicorn server.main:app --reload --port 8000
 ```
 
-Open http://localhost:8000/. With nothing registered yet, seed some demo
-devices/zones in another terminal:
+Build the UI (React + TypeScript + Vite, SCSS modules) once so the
+control plane can serve it at http://localhost:8000/:
+
+```powershell
+cd ui\web
+npm install
+npm run build
+```
+
+For UI development, run `npm run dev` in `ui\web` instead and open
+http://localhost:3000/ (hot reload; proxies `/api` and `/ws` to the
+control plane on port 8000).
+
+With nothing registered yet, seed some demo devices/zones in another
+terminal:
 
 ```powershell
 .venv\Scripts\python scripts\seed_demo.py

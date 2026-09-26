@@ -1,0 +1,28 @@
+@use "../../styles/variables" as *;
+
+.card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: $radius;
+  background: $row;
+  border: 1px solid $border;
+
+  button {
+    background: transparent;
+    border: 1px solid $border;
+    color: $text;
+    padding: 4px 10px;
+    border-radius: $radius;
+    cursor: pointer;
+  }
+}
+
+.active {
+  color: $ok;
+}
+
+.error {
+  color: $err;
+}

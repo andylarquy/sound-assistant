@@ -3,5 +3,6 @@ __pycache__/
 *.pyc
 sound_assistant.db
 node_modules/
+dist/
 .mypy_cache/
 .DS_Store

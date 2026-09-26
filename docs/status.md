@@ -11,9 +11,11 @@ state of MVP0.
   zones to sinks and delegates to a transport. Verified end to end: seed
   demo devices, create a route (`PC -> Living Room + Kitchen`), see it
   active, stop it.
-* **Web UI** (`ui/web/`) - plain HTML/JS (no build step yet; DESIGN.md
-  section 19 calls for React eventually, deferred until there's more UI
-  to justify it). Served by the control plane at `/`. Renders the
+* **Web UI** (`ui/web/`) - React + TypeScript + Vite, SCSS modules for
+  styling, plain `fetch` service layer and a context-based snapshot store
+  fed by the websocket (no TanStack Query yet - add when the app becomes
+  request-driven). The control plane serves the built `ui/web/dist` at
+  `/`. Renders the
   MVP0 mockup from DESIGN.md section 21: pick a source, check
   destinations, ROUTE, see/stop active routes. Live-updates over `/ws`.
 * **`MockTransport`** (`server/transports/mock.py`) - default transport.

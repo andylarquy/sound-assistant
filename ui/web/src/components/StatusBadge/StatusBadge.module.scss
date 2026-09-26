@@ -1,0 +1,17 @@
+@use "../../styles/variables" as *;
+
+.badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: $border;
+  color: $muted;
+}
+
+.connected {
+  color: $ok;
+}
+
+.disconnected {
+  color: $err;
+}
