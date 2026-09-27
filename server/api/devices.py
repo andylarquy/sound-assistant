@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from server.api.schemas import DeviceCreate
 from server.broadcast import broadcast_state
-from server.models import Device
+from server.models import Device, Route, RouteSink, Sink, Source
 from server.persistence.db import get_session
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
@@ -53,9 +53,40 @@ async def heartbeat(device_id: str, session: Session = Depends(get_session)) -> 
 
 @router.delete("/{device_id}")
 async def delete_device(device_id: str, session: Session = Depends(get_session)) -> dict:
+    """Deleting a device also tears down everything that depended on it:
+    its sources/sinks, any routes that used them, and the route<->sink
+    links for those routes. Source/Sink.device_id are NOT NULL, so a
+    plain `session.delete(device)` fails with an IntegrityError the
+    moment SQLAlchemy tries to null those out instead of removing them."""
     device = session.get(Device, device_id)
     if device is None:
         raise HTTPException(404, f"unknown device {device_id!r}")
+
+    sources = session.exec(select(Source).where(Source.device_id == device_id)).all()
+    sinks = session.exec(select(Sink).where(Sink.device_id == device_id)).all()
+    source_ids = [s.id for s in sources]
+    sink_ids = [s.id for s in sinks]
+
+    routes = session.exec(select(Route).where(Route.source_id.in_(source_ids))).all() if source_ids else []
+    route_ids = {r.id for r in routes}
+    if sink_ids:
+        route_ids |= {
+            rs.route_id
+            for rs in session.exec(select(RouteSink).where(RouteSink.sink_id.in_(sink_ids))).all()
+        }
+
+    for route_id in route_ids:
+        for rs in session.exec(select(RouteSink).where(RouteSink.route_id == route_id)).all():
+            session.delete(rs)
+        route = session.get(Route, route_id)
+        if route is not None:
+            session.delete(route)
+
+    for source in sources:
+        session.delete(source)
+    for sink in sinks:
+        session.delete(sink)
+
     session.delete(device)
     session.commit()
     await broadcast_state(session)
