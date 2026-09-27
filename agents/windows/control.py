@@ -24,9 +24,12 @@ class ControlPlaneClient:
         resp.raise_for_status()
         return resp.json()
 
-    def register_source(self, device_id: str, name: str, kind: str = "system_audio") -> dict:
+    def register_source(
+        self, device_id: str, name: str, kind: str = "system_audio", transport_ref: str | None = None
+    ) -> dict:
         resp = self._client.post(
-            f"/api/devices/{device_id}/sources", json={"name": name, "kind": kind}
+            f"/api/devices/{device_id}/sources",
+            json={"name": name, "kind": kind, "transport_ref": transport_ref},
         )
         resp.raise_for_status()
         return resp.json()

@@ -30,12 +30,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("sound_assistant.agent.windows")
 
 
-def register_with_retry(client: ControlPlaneClient, device_name: str) -> dict:
+def register_with_retry(client: ControlPlaneClient, device_name: str, stream_name: str) -> dict:
     delay = 2.0
     while True:
         try:
             device = client.register_device(device_name)
-            source = client.register_source(device["id"], "PC system audio")
+            source = client.register_source(
+                device["id"], "PC system audio", transport_ref=stream_name
+            )
             logger.info("registered as device %s, source %s", device["id"], source["id"])
             return device
         except Exception as exc:  # control plane unreachable, bad response, etc.
@@ -58,11 +60,16 @@ def main() -> None:
     parser.add_argument("--sink-host", required=True, help="snapserver tcp stream host")
     parser.add_argument("--sink-port", type=int, required=True, help="snapserver tcp stream port")
     parser.add_argument("--name", default=socket.gethostname(), help="device name to register as")
+    parser.add_argument(
+        "--stream-name",
+        default="pc",
+        help="snapserver stream id this source maps to (must match the `name=` in snapserver.conf's tcp source)",
+    )
     parser.add_argument("--heartbeat-interval", type=float, default=15.0)
     args = parser.parse_args()
 
     client = ControlPlaneClient(args.server)
-    device = register_with_retry(client, args.name)
+    device = register_with_retry(client, args.name, args.stream_name)
 
     stop_heartbeat = threading.Event()
     hb_thread = threading.Thread(

@@ -29,23 +29,44 @@ state of MVP0.
   listener (not a real snapserver): ~192KB/s sustained, matching the
   expected PCM bitrate exactly.
 * **Windows agent <-> control plane** (`agents/windows/control.py`,
-  `main.py`) - registers device + source over REST, heartbeats
-  periodically, retries with backoff if the control plane is
-  unreachable instead of crashing. Verified against the running server.
+  `main.py`) - registers device + source over REST (including the
+  `transport_ref` matching a real snapserver stream id via
+  `--stream-name`), heartbeats periodically, retries with backoff if the
+  control plane is unreachable instead of crashing. Verified against the
+  running server.
+* **Control plane, containerized** (`server/Dockerfile`,
+  `docker-compose.yml`) - multi-stage build (Node build of `ui/web`, then
+  Python runtime), SQLite persisted via a bind-mounted volume. Deployed
+  on a real Ubuntu box (Docker already present there) using
+  `network_mode: host` specifically so the existing `ufw` LAN-only
+  firewall rules stay effective - Docker's default port publishing
+  bypasses `ufw` entirely, which was a hard requirement here. Verified:
+  built and running there, reachable from another machine on the LAN at
+  `http://<host>:8000/`.
+* **Real Snapcast infrastructure** - `snapserver` + `snapclient` 0.27.0
+  installed natively (via `apt`) on that same Ubuntu box, not
+  containerized (no meaningful dependency isolation to gain there, and
+  `snapclient` needs real audio hardware/PipeWire access that's much
+  simpler native). `snapclient` runs as a **user-level** systemd unit
+  (`systemctl --user`), not the packaged system-wide one - Ubuntu
+  24.04's audio stack (PipeWire) lives in the user session, and the
+  distro's system-wide `snapclient.service` can't reach it.
+* **`SnapcastTransport`, end to end, with real audible playback** -
+  validated for real: WASAPI loopback capture on this Windows machine ->
+  real TCP stream -> real `snapserver` (`pc` stream) -> real `snapclient`
+  -> actual audible sound out of the Ubuntu box's speakers, with the
+  route created through the real control plane API (not `MockTransport`).
+  Confirmed by ear, twice, including with an independently-generated
+  clean test tone (isolating the agent's capture path from the
+  Snapcast/config path). This is the actual thing MVP0 exists to prove.
 
 ## Implemented but not yet exercised against real infrastructure
 
-* **`SnapcastTransport`** (`server/transports/snapcast.py`) - talks to a
-  real `snapserver`'s JSON-RPC control port to assign client groups to
-  streams. Written against Snapcast's documented protocol, but no
-  `snapserver`/`snapclient` binaries are installed in this environment,
-  so it has not been run against a live server yet.
-* **End-to-end synchronized playback** (MVP0's actual goal: PC -> two
-  Pi endpoints, synchronized) - requires `snapserver` running somewhere,
-  `snapclient` on at least two real or virtual endpoints, and the
-  Windows agent's stream format matching what `snapserver.conf` declares
-  for its `tcp` stream source. None of that hardware/software exists in
-  this dev environment yet.
+* **Two synchronized endpoints** - MVP0's full goal is one source to
+  *two or more* speakers, synchronized. Only one real sink
+  (`snapclient` on the same Ubuntu box) has been validated so far. A
+  second endpoint (another box, or a second `snapclient` instance) is
+  the remaining piece.
 * **`snapcast-rs`** - not evaluated at all yet. DESIGN.md section 9 flags
   its maturity as something to check before depending on it; for now the
   project talks to a plain `snapserver` process instead (see
@@ -61,9 +82,15 @@ state of MVP0.
   no latency model - all explicitly out of scope until their milestone
   (MVP4/MVP5 in DESIGN.md section 22).
 * macOS/Linux/Android/iOS agents don't exist yet (MVP2/MVP3/MVP6).
+* `snapserver`'s `tcp` source in `mode=server` does not gracefully handle
+  a second producer connecting while one is already active - the second
+  connection's bytes just queue up unread rather than being rejected or
+  swapped in. Only ever run one producer (one Windows agent instance) per
+  stream; this bit us during testing when a stale agent process and a
+  manual test script were briefly connected at the same time.
 
 ## Next concrete step
 
-Install `snapserver`/`snapclient` (or run them in containers/VMs) and
-point `SnapcastTransport` + the Windows agent at a real instance to
-validate the actual MVP0 goal: two synchronized endpoints.
+Bring up a second real sink (another box, or a second `snapclient`
+instance) and validate genuinely synchronized playback across two
+endpoints - the last piece of MVP0's actual goal.
