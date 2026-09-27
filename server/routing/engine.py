@@ -81,8 +81,10 @@ class RoutingEngine:
         if route is None:
             raise RoutingError(f"unknown route {route_id!r}")
 
+        sinks = self.sinks_for_route(session, route_id)
+
         try:
-            self.transport.stop_route(route)
+            self.transport.stop_route(route, sinks)
             route.status = RouteStatus.STOPPED
             route.error = None
         except TransportError as exc:

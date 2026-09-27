@@ -23,8 +23,8 @@ Stream.RemoveStream for fully dynamic streams; that can replace the
 static-pipe assumption later without changing this class's public
 interface.
 
-This has not yet been exercised against a real snapserver in this
-environment (none is installed here) - see docs/status.md.
+Validated against a real snapserver/snapclient setup, including actual
+audible playback - see docs/status.md.
 """
 from __future__ import annotations
 
@@ -87,16 +87,24 @@ class SnapcastTransport(AudioTransport):
                     return group["id"]
         raise TransportError(f"no snapcast group contains client {client_transport_ref!r}")
 
+    def _group_ids_for_sinks(self, sinks: list[Sink], status: dict | None = None) -> set[str]:
+        status = status or self._rpc("Server.GetStatus")
+        group_ids = set()
+        for sink in sinks:
+            if not sink.transport_ref:
+                raise TransportError(f"sink {sink.name!r} has no snapcast client id configured")
+            group_ids.add(self._group_id_for_client(sink.transport_ref, status))
+        return group_ids
+
     def start_route(self, route: Route, source: Source, sinks: list[Sink]) -> None:
         if not source.transport_ref:
             raise TransportError(f"source {source.name!r} has no snapcast stream id configured")
 
         status = self._rpc("Server.GetStatus")
-        for sink in sinks:
-            if not sink.transport_ref:
-                raise TransportError(f"sink {sink.name!r} has no snapcast client id configured")
-            group_id = self._group_id_for_client(sink.transport_ref, status)
+        for group_id in self._group_ids_for_sinks(sinks, status):
             self._rpc("Group.SetStream", {"id": group_id, "stream_id": source.transport_ref})
+            # Unmute in case a previous stop_route() muted this group.
+            self._rpc("Group.SetMute", {"id": group_id, "mute": False})
         logger.info(
             "route %s: snapcast stream %s -> groups for clients %s",
             route.id,
@@ -104,12 +112,15 @@ class SnapcastTransport(AudioTransport):
             [s.transport_ref for s in sinks],
         )
 
-    def stop_route(self, route: Route) -> None:
-        # There's no "silence" stream id in general; MVP0 relies on the
-        # caller re-routing groups elsewhere (or the group having an idle
-        # default stream). Revisit once Stream.AddStream-based virtual
-        # silence streams are in place.
-        logger.info("route %s stop requested (no-op at transport level for now)", route.id)
+    def stop_route(self, route: Route, sinks: list[Sink]) -> None:
+        # Snapcast has no generic "silence" stream to re-point the group
+        # at, so this mutes the group instead of un-assigning the stream.
+        # The group stays subscribed to the stream (still receiving and
+        # decoding audio) but produces no sound - functionally "stopped"
+        # from the user's perspective, which is what matters here.
+        for group_id in self._group_ids_for_sinks(sinks):
+            self._rpc("Group.SetMute", {"id": group_id, "mute": True})
+        logger.info("route %s: muted groups for sinks %s", route.id, [s.transport_ref for s in sinks])
 
     def set_volume(self, sink: Sink, volume: float) -> None:
         if not sink.transport_ref:

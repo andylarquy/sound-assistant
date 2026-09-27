@@ -25,8 +25,8 @@ class AudioTransport(ABC):
         """Make `source` audible on all of `sinks`."""
 
     @abstractmethod
-    def stop_route(self, route: Route) -> None:
-        """Undo whatever start_route did for this route."""
+    def stop_route(self, route: Route, sinks: list[Sink]) -> None:
+        """Undo whatever start_route did for this route on `sinks`."""
 
     @abstractmethod
     def set_volume(self, sink: Sink, volume: float) -> None:

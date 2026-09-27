@@ -76,8 +76,13 @@ state of MVP0.
 
 * No resampling or format negotiation between the agent's capture format
   and whatever a real transport expects - they're assumed to match.
-* `SnapcastTransport.stop_route` is a no-op (Snapcast has no generic
-  "silence" stream to fall back to yet).
+* `SnapcastTransport.stop_route` mutes the group rather than
+  un-assigning its stream (Snapcast has no generic "silence" stream to
+  fall back to) - the group stays subscribed and decoding, just muted.
+  Functionally equivalent from the listener's perspective. Found and
+  fixed after testing showed audio kept playing even after every route
+  was removed in the UI - the earlier no-op version genuinely didn't
+  stop anything at the Snapcast level.
 * No persistence for `RouteSink` cascade deletes, no auth/permissions,
   no latency model - all explicitly out of scope until their milestone
   (MVP4/MVP5 in DESIGN.md section 22).

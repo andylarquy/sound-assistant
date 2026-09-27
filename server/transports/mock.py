@@ -22,7 +22,7 @@ class MockTransport(AudioTransport):
         dest = ", ".join(s.name for s in sinks)
         logger.info("route %s: %s -> [%s]", route.id, source.name, dest)
 
-    def stop_route(self, route: Route) -> None:
+    def stop_route(self, route: Route, sinks: list[Sink]) -> None:
         self._active.pop(route.id, None)
         logger.info("route %s stopped", route.id)
 
