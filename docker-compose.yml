@@ -1,0 +1,20 @@
+# Control plane, meant to run on the same host as (or with LAN access to)
+# a real snapserver. Deliberately uses `network_mode: host` instead of
+# publishing ports: Docker's default port publishing rewrites iptables
+# and bypasses ufw rules entirely, which defeats the LAN-only firewall
+# setup this project relies on. With host networking, port 8000 is a
+# normal process port on this machine and existing ufw rules apply as-is
+# (still requires its own explicit ufw allow - see docs/status.md).
+services:
+  control-plane:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    network_mode: host
+    environment:
+      SOUND_ASSISTANT_TRANSPORT: snapcast
+      SNAPSERVER_HOST: 127.0.0.1
+      SNAPSERVER_PORT: "1705"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
