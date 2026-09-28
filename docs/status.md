@@ -59,6 +59,35 @@ state of MVP0.
   Confirmed by ear, twice, including with an independently-generated
   clean test tone (isolating the agent's capture path from the
   Snapcast/config path). This is the actual thing MVP0 exists to prove.
+* **Custom Rust Snapcast client** (`agents/windows/sync-client/`) - a
+  small CLI embedding a fork of the `snapcast-client` crate
+  (`github.com/andylarquy/snapcast-rs`), built for the Windows
+  sync-toggle work (see DESIGN.md section 15). Connects to the real
+  `snapserver`, decodes the real `pc` stream, and plays it via `cpal` -
+  confirmed by ear, in sync with the Ubuntu box's native `snapclient`,
+  residual offset under ~100ms (down from the ~1s gap and total silence
+  seen before fixing the two issues below). Two real bugs found and
+  addressed along the way:
+  * The crate's non-Unix clock source used wall-clock `SystemTime`
+    instead of a genuinely monotonic clock, violating its own documented
+    "both ends must share a clock domain" requirement - produced
+    nonsensical multi-year-scale sync offsets. Fixed upstream in the fork
+    (commit `860206c`): switched to a process-start-relative
+    `std::time::Instant`.
+  * Separately, the crate's public `audio_rx` API forwards decoded audio
+    immediately, bypassing its own internal scheduler (`Stream`/
+    `get_player_chunk`, which exists but is only reachable via a private
+    field) entirely - so nothing using that public path was ever
+    actually synchronized, clock bug or not. Worked around in our own
+    CLI rather than patched further in the crate: `client.time_provider`
+    and the clock offset it exposes are already public, so `main.rs`
+    computes each frame's intended play time itself
+    (`frame.timestamp_usec + buffer_ms`, translated into our clock
+    domain) and sleeps until then before handing it to `cpal`.
+  * Not yet wired to VB-CABLE - currently plays to whatever this PC's
+    *current* default output device is, not specifically the virtual
+    cable. That integration, and the actual enable/disable toggle around
+    it, are still the remaining pieces (see below).
 
 ## Implemented but not yet exercised against real infrastructure
 
@@ -71,6 +100,24 @@ state of MVP0.
   its maturity as something to check before depending on it; for now the
   project talks to a plain `snapserver` process instead (see
   `SnapcastTransport`'s docstring for the reasoning).
+
+## Designed but not implemented
+
+* **Windows sync toggle** (per-device enable/disable for genuinely
+  synced local + networked playback, DESIGN.md section 15's "Closing the
+  gap" material) - the hard technical risk (can a from-scratch Rust
+  Snapcast client actually achieve real cross-machine sync at all) is
+  now validated, see `sync-client` above. Still not built:
+  * Wiring the sync-client to VB-CABLE specifically: capturing from
+    "CABLE Input"'s loopback (via the existing, unchanged
+    `agents/windows/capture.py`) as the source, while `sync-client`
+    plays to the *real* output device - rather than today's spike, which
+    plays to whatever the current default happens to be.
+  * Backend/agent/UI wiring (a `Device.sync_enabled` field, an API to
+    set it, the Windows agent polling for and acting on it via its
+    existing heartbeat, default-output switching via `IPolicyConfig`,
+    subprocess management for the Rust binary, a UI toggle) - not
+    started; deferred to a dedicated planning round.
 
 ## Known gaps / deliberate simplifications
 

@@ -727,6 +727,57 @@ If the Sound Assistant server disappears, agents should fail gracefully and rest
 
 This prevents the system from becoming a single point of failure for basic audio functionality.
 
+## Mirror mode
+
+A third, distinct mode: the device's normal local playback is left completely untouched, while a copy of the same audio is also captured and made available to Sound Assistant for routing elsewhere.
+
+```text
+        User / OS
+           │
+           ├───────────────────────────────┐
+           ▼                               ▼
+      OS audio system              Agent (capture)
+      (local speakers,                    │
+       unaffected)                        ▼
+                                   Sound Assistant → other zones
+```
+
+This is not a hybrid of Central and Local mode - it is a source acting in both roles at once: locally exactly as if Sound Assistant did not exist, and simultaneously as a source for other zones. This is what the Windows agent's WASAPI loopback capture implements today: a passive tap, never redirecting or interrupting local output.
+
+### Latency mismatch is expected, not a defect
+
+Sound Assistant's synchronized transports (e.g. Snapcast) deliberately buffer audio - typically several hundred milliseconds to around a second - so that multiple destination endpoints can stay in sync with each other despite network jitter. That buffer only applies to the routed copy; the device's own local playback has no such delay.
+
+Consequence: a user positioned near both the source device and a mirrored destination will hear the destination noticeably lag the source. This is inherent to any system that guarantees multi-room synchronization over a network, not something Mirror mode is expected to eliminate. The gap can be *reduced* (a smaller stream buffer, traded against tolerance for network jitter) but not removed to the point of feeling instantaneous - that would require abandoning cross-room synchronization guarantees entirely.
+
+Muting or redirecting the source device's own local output, so only the remote copy is heard, is a possible per-route option for a future milestone, but must never be the default: Mirror mode's entire purpose is that local playback keeps working untouched.
+
+### Closing the gap requires intercepting the local path - and not every platform allows that
+
+The latency gap above assumes a *passive* capture (a tap that observes the signal without touching it), which is all every platform's basic loopback/capture API provides. Genuinely closing the gap - so the source's own speakers play the *same delayed, synchronized copy* as every other destination, rather than the immediate original - requires something to sit in the local render path and prevent the immediate original from reaching hardware directly. Whether a platform can do that at all, and how invasively, varies enormously:
+
+* **Windows** - capture works today (WASAPI loopback, implemented in `agents/windows/capture.py`). Closing the gap needs either a third-party virtual audio driver (e.g. VB-CABLE - free, mature, but kernel-mode) as the system's default output, or a more surgical native alternative: per-process loopback capture combined with per-app volume muting (`ISimpleAudioVolume`, e.g. via `pycaw`) - no driver install, but scoped to one application rather than whole-system audio, and meaningfully more integration work than device-level capture.
+* **macOS** - capture works the same way (Core Audio loopback / process tap). Closing the gap is comparatively the nicest case: macOS's built-in Multi-Output Device can combine local speakers with an **AirPlay** target and keeps them in sync natively - a first-party feature, not a driver. This implies routing such sources over a distinct `AirPlayTransport` (see section 10) to AirPlay-capable receivers (e.g. `shairport-sync`), rather than through Snapcast.
+* **Linux** - capture works (PipeWire/PulseAudio monitor sources). Closing the gap is native and requires no third-party tooling at all: virtual/null sinks are a first-class feature of the audio server already in use.
+* **Android** - capture is best-effort (`AudioPlaybackCapture`, introduced Android 10; individual apps can opt out, and most DRM'd/streaming apps do). There is no way to close the gap: no per-app mute granularity exists for muting a specific *other* app, and there is no native simultaneous local+network output comparable to macOS's Multi-Output Device. Android should therefore only ever run in **Central mode** for a given source - capture the (opt-in) media stream while muting the local media volume stream outright - never Mirror mode.
+* **iOS** - no general audio capture API exists for third-party apps at all. iOS cannot be a Mirror-mode *or* Central-mode source; it remains sink-only (DESIGN.md section 12).
+
+This is a capability distinction, in the same spirit as section 3.3's device capability discovery - not every device needs to expose the same set of behaviors, and the control plane and UI should reflect what a given device can actually do rather than assuming uniform support.
+
+### Windows: the chosen approach, and why the official snapclient was rejected
+
+Two concrete decisions for Windows, reached after evaluating the alternatives above:
+
+**The virtual audio interface is VB-CABLE**, not the open-source Synchronous Audio Router. SAR's license (GPL-3.0, fully auditable) is objectively cleaner than VB-CABLE's closed-source freeware terms, but SAR is built for DAW/pro-audio routing and would need real work to shape into "one simple cable," and its maintenance is fragmented across community forks of a less-active original project. VB-CABLE is purpose-built for exactly this, with over a decade of proven stability - more important than usual here since this is kernel-mode territory, where a bug means instability, not just a caught exception. VB-CABLE is installed and verified in this project's Windows dev environment: its render endpoint ("CABLE Input") exposes a proper WASAPI loopback view, so the existing `agents/windows/capture.py` works with it unchanged, once it becomes the default output device.
+
+**The synced playback client will not be the official C++ `snapclient.exe`.** This project's dependencies should be things installed through a programming language's own package manager (pip/cargo/npm), not separately-versioned third-party applications carrying their own licensing/availability risk (a project can be discontinued or paywalled with no recourse). VB-CABLE is accepted as the one necessary exception - a driver is unavoidable for real interception - but a second bundled application should not be stacked on top of it. Instead, the plan is a **small custom Rust CLI binary**, built by this project, embedding the `snapcast-client` crate (from the `metaneutrons/snapcast-rs` project, protocol-compatible with the existing C++ Snapcast ecosystem) rather than shelling out to somebody else's executable. The Windows agent manages it as a subprocess - deliberately not embedded in-process via PyO3, so a crash or audio glitch on the Rust side can't take down the agent's capture/registration/heartbeat logic.
+
+This is also the first concrete use of section 19's "Rust for the audio/native layer," scoped for now to just the Windows sync-client rather than the whole audio engine. It does not touch the existing Ubuntu `snapserver`/`snapclient` (native, `apt`-installed, already proven), which stay exactly as they are.
+
+Accepted, not dismissed, risk: the `snapcast-client` crate has 0 GitHub stars - essentially unvetted by the community - a real gap in the "reuse mature infrastructure" principle that section 9 already flagged for `snapcast-rs` in general. It's accepted here in service of the dependency-purity principle above, to be validated hands-on before being depended on further.
+
+**Update: validated, with two real bugs found along the way.** A spike CLI (`agents/windows/sync-client/`) embedding a fork of the crate (`github.com/andylarquy/snapcast-rs`) achieved genuine cross-machine synchronized playback against the real Ubuntu `snapserver`/`snapclient` - confirmed by ear, residual offset under ~100ms. The 0-star risk was real: the crate's non-Unix clock source used wall-clock time instead of a monotonic one (fixed upstream in the fork), and separately its public API bypassed its own internal synchronization scheduler entirely (worked around by scheduling playback ourselves, using the clock offset and buffer setting the crate already exposes publicly). See `docs/status.md` for the full detail. Not yet done: wiring this CLI to VB-CABLE specifically, and the actual enable/disable toggle around it.
+
 ---
 
 # 16. Guest access
