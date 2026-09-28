@@ -15,12 +15,34 @@
 //! that instant before handing it to cpal.
 
 use std::collections::VecDeque;
+use std::io::Write;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use snapcast_client::{ClientConfig, ClientEvent, SnapClient};
+
+/// `println!`/`eprintln!` only auto-flush promptly when stdout/stderr is
+/// detected as a real interactive terminal. Spawned as a subprocess via
+/// Python's `subprocess.Popen` (as this always is - see
+/// agents/windows/sync_controller.py), that detection can fail, silently
+/// leaving every line stuck in an internal buffer forever - so nothing
+/// ever reaches the parent agent's console, not even on a real failure.
+/// Flush explicitly instead of trusting line-buffering to kick in.
+macro_rules! log {
+    ($($arg:tt)*) => {{
+        println!($($arg)*);
+        let _ = std::io::stdout().flush();
+    }};
+}
+
+macro_rules! log_err {
+    ($($arg:tt)*) => {{
+        eprintln!($($arg)*);
+        let _ = std::io::stderr().flush();
+    }};
+}
 
 #[derive(Parser)]
 struct Args {
@@ -71,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    println!("connecting to snapserver at {host}:{} ...", args.port);
+    log!("connecting to snapserver at {host}:{} ...", args.port);
     let (mut client, mut events, mut audio_rx) = SnapClient::new(config);
 
     // Cloned out before client.run() takes &mut client, so the audio task
@@ -87,7 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let ClientEvent::ServerSettings { buffer_ms, .. } = &event {
                 buffer_ms_for_events.store(*buffer_ms as i64, Ordering::Relaxed);
             }
-            println!("event: {event:?}");
+            log!("event: {event:?}");
         }
     });
 
@@ -106,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .default_output_device()
                 .expect("no default output device"),
         };
-        println!("output device: {}", device_name(&device));
+        log!("output device: {}", device_name(&device));
 
         while let Some(frame) = audio_rx.recv().await {
             // How many samples to accumulate before letting cpal start
@@ -153,7 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
 
-                println!(
+                log!(
                     "opening cpal stream: {} Hz, {} ch (primed with {prime_ms}ms)",
                     frame.sample_rate, frame.channels
                 );
@@ -172,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 *sample = buf.pop_front().unwrap_or(0.0);
                             }
                         },
-                        |err| eprintln!("cpal stream error: {err}"),
+                        |err| log_err!("cpal stream error: {err}"),
                         None,
                     )
                     .expect("failed to build output stream");
@@ -180,19 +202,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 stream_handle = Some(stream);
             }
         }
-        println!("audio channel closed");
+        log!("audio channel closed");
     });
 
-    println!("running client (Ctrl+C to stop)...");
+    log!("running client (Ctrl+C to stop)...");
     tokio::select! {
         result = client.run() => {
-            println!("client.run() returned: {result:?}");
+            log!("client.run() returned: {result:?}");
         }
         _ = audio_task => {
-            println!("audio task ended");
+            log!("audio task ended");
         }
         _ = tokio::signal::ctrl_c() => {
-            println!("stopping");
+            log!("stopping");
         }
     }
 
