@@ -59,21 +59,31 @@ state of MVP0.
   Confirmed by ear, twice, including with an independently-generated
   clean test tone (isolating the agent's capture path from the
   Snapcast/config path). This is the actual thing MVP0 exists to prove.
+* **Windows sync toggle, end to end** (per-device enable/disable for
+  genuinely synced local + networked playback, DESIGN.md section 15's
+  "Closing the gap" material) - fully built and validated: `Device.sync_enabled`,
+  the `PUT /api/devices/{id}/sync` endpoint, the Windows agent picking it up
+  via its existing heartbeat and switching the default output device
+  (`agents/windows/audio_device.py`, `pycaw`) to VB-CABLE's "CABLE Input",
+  `sync_controller.py` spawning/tearing down the Rust `sync-client` subprocess
+  pointed at the real hardware device by name, and the UI checkbox
+  (`SourceList`) driving all of it. Confirmed by ear: enabling Sync switches
+  this PC's own speakers to the delayed, synchronized copy; disabling it
+  restores instant local playback; a physical stress test (carrying the
+  Ubuntu box around the room, briefly behind a wall) stayed in sync with no
+  packet loss over WiFi.
 * **Custom Rust Snapcast client** (`agents/windows/sync-client/`) - a
   small CLI embedding a fork of the `snapcast-client` crate
-  (`github.com/andylarquy/snapcast-rs`), built for the Windows
-  sync-toggle work (see DESIGN.md section 15). Connects to the real
-  `snapserver`, decodes the real `pc` stream, and plays it via `cpal` -
-  confirmed by ear, in sync with the Ubuntu box's native `snapclient`,
-  residual offset under ~100ms (down from the ~1s gap and total silence
-  seen before fixing the two issues below). Two real bugs found and
-  addressed along the way:
+  (`github.com/andylarquy/snapcast-rs`), built for the toggle above.
+  Connects to the real `snapserver`, decodes the real `pc` stream, and
+  plays it via `cpal` - confirmed by ear, in sync with the Ubuntu box's
+  native `snapclient`, residual offset under ~100ms. Three real bugs
+  found and addressed along the way, all in the forked crate:
   * The crate's non-Unix clock source used wall-clock `SystemTime`
     instead of a genuinely monotonic clock, violating its own documented
     "both ends must share a clock domain" requirement - produced
-    nonsensical multi-year-scale sync offsets. Fixed upstream in the fork
-    (commit `860206c`): switched to a process-start-relative
-    `std::time::Instant`.
+    nonsensical multi-year-scale sync offsets. Fixed (commit `860206c`):
+    switched to a process-start-relative `std::time::Instant`.
   * Separately, the crate's public `audio_rx` API forwards decoded audio
     immediately, bypassing its own internal scheduler (`Stream`/
     `get_player_chunk`, which exists but is only reachable via a private
@@ -84,10 +94,17 @@ state of MVP0.
     computes each frame's intended play time itself
     (`frame.timestamp_usec + buffer_ms`, translated into our clock
     domain) and sleeps until then before handing it to `cpal`.
-  * Not yet wired to VB-CABLE - currently plays to whatever this PC's
-    *current* default output device is, not specifically the virtual
-    cable. That integration, and the actual enable/disable toggle around
-    it, are still the remaining pieces (see below).
+  * `Controller::receive_loop` raced `TcpConnection::recv()` - which read
+    directly off the socket via `read_exact` - inside a `tokio::select!`
+    against periodic sync-timer ticks. `read_exact` isn't
+    cancellation-safe: whenever a timer tick won that race mid-read, the
+    partially-read bytes were silently dropped and the stream's framing
+    permanently desynced, surfacing minutes later as random-looking
+    "payload too large" disconnects during real sustained playback (never
+    at idle). Fixed (commit `449be31`): the socket read now lives on its
+    own dedicated background task forwarding complete frames over an
+    `mpsc` channel, so `recv()` only ever races a cancellation-safe
+    channel receive.
 
 ## Implemented but not yet exercised against real infrastructure
 
@@ -100,24 +117,6 @@ state of MVP0.
   its maturity as something to check before depending on it; for now the
   project talks to a plain `snapserver` process instead (see
   `SnapcastTransport`'s docstring for the reasoning).
-
-## Designed but not implemented
-
-* **Windows sync toggle** (per-device enable/disable for genuinely
-  synced local + networked playback, DESIGN.md section 15's "Closing the
-  gap" material) - the hard technical risk (can a from-scratch Rust
-  Snapcast client actually achieve real cross-machine sync at all) is
-  now validated, see `sync-client` above. Still not built:
-  * Wiring the sync-client to VB-CABLE specifically: capturing from
-    "CABLE Input"'s loopback (via the existing, unchanged
-    `agents/windows/capture.py`) as the source, while `sync-client`
-    plays to the *real* output device - rather than today's spike, which
-    plays to whatever the current default happens to be.
-  * Backend/agent/UI wiring (a `Device.sync_enabled` field, an API to
-    set it, the Windows agent polling for and acting on it via its
-    existing heartbeat, default-output switching via `IPolicyConfig`,
-    subprocess management for the Rust binary, a UI toggle) - not
-    started; deferred to a dedicated planning round.
 
 ## Known gaps / deliberate simplifications
 
@@ -148,6 +147,19 @@ state of MVP0.
   forcibly interrupting a blocked native read from another thread has
   its own uncertain cleanup semantics, worth its own dedicated look
   rather than bolting on here.
+* `buffer_ms` is a hardcoded value in the Ubuntu box's `/etc/snapserver.conf`,
+  found by hand rather than calculated - confirmed to be a genuine
+  network/OS-scheduling jitter floor (both the custom `sync-client` and the
+  stock upstream `snapclient` XRUN continuously at 100ms, ruling out an
+  application bug), not yet automated since only one agent (the Ubuntu box)
+  is on WiFi so far. Manually tuned to 132ms (down from a 200ms starting
+  point) - held up glitch-free including under a real
+  walk-around-the-room/behind-a-wall WiFi stress test - but later started
+  sputtering again with no code or config change on either side, and had to
+  be raised to 140ms. A real, observed instance of the WiFi-jitter-drifts
+  risk DESIGN.md section 15 already flagged, not a one-off fluke - a fixed
+  value isn't guaranteed to keep holding. See that section for the options
+  on the table for when a fixed value stops being good enough.
 * `snapserver`'s `tcp` source in `mode=server` does not gracefully handle
   a second producer connecting while one is already active - the second
   connection's bytes just queue up unread rather than being rejected or

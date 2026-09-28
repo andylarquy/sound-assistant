@@ -8,7 +8,8 @@ param(
     [int]$SinkPort = 4953,
     [int]$SyncPort = 1704,
     [string]$StreamName = "pc",
-    [string]$Name = "Andres' PC"
+    [string]$Name = "Andres' PC",
+    [double]$HeartbeatInterval = 15.0
 )
 
 $python = Join-Path $PSScriptRoot "..\..\.venv\Scripts\python.exe"
@@ -19,4 +20,5 @@ $python = Join-Path $PSScriptRoot "..\..\.venv\Scripts\python.exe"
     --sink-port $SinkPort `
     --sync-port $SyncPort `
     --stream-name $StreamName `
-    --name $Name
+    --name $Name `
+    --heartbeat-interval $HeartbeatInterval

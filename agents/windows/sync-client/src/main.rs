@@ -138,7 +138,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         log!("output device: {}", device_name(&device));
 
+        // Diagnostic only (no behavior change): tells apart two very
+        // different causes of a long silence gap - frames not arriving
+        // from the network/decode pipeline in time (this), versus our own
+        // scheduling deciding to sleep for a long time below (next block).
+        let mut last_frame_at = std::time::Instant::now();
+
         while let Some(frame) = audio_rx.recv().await {
+            let since_last_frame = last_frame_at.elapsed();
+            last_frame_at = std::time::Instant::now();
+            if since_last_frame > std::time::Duration::from_millis(200) {
+                log_err!(
+                    "upstream stall: {since_last_frame:?} since the previous decoded frame arrived (network/decode, not our scheduling)"
+                );
+            }
+
             let underruns = underrun_for_audio.swap(0, Ordering::Relaxed);
             if underruns > 0 {
                 log_err!("buffer underrun: {underruns} samples were silence since last check");
@@ -161,6 +175,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let target_local_usec = target_server_usec - offset_usec;
             let now_usec = snapcast_proto::time::now_usec();
             let wait_usec = target_local_usec - now_usec;
+            if wait_usec > 300_000 {
+                log_err!(
+                    "scheduling stall: computed a {}ms wait (target_local={target_local_usec}us now={now_usec}us offset={offset_usec}us frame_ts={}us) - our own sleep, not upstream",
+                    wait_usec / 1000,
+                    frame.timestamp_usec
+                );
+            }
             if wait_usec > 0 {
                 tokio::time::sleep(std::time::Duration::from_micros(wait_usec as u64)).await;
             }
