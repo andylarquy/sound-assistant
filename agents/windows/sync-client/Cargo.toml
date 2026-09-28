@@ -1,0 +1,10 @@
+[package]
+name = "sync-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cpal = "0.18.2"
+snapcast-client = { git = "https://github.com/andylarquy/snapcast-rs", package = "snapcast-client" }
+snapcast-proto = { git = "https://github.com/andylarquy/snapcast-rs", package = "snapcast-proto" }
+tokio = { version = "1.53.1", features = ["full"] }
