@@ -108,12 +108,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         println!("output device: {}", device_name(&device));
 
-        // How many samples to accumulate before letting cpal start pulling
-        // from the buffer at all, so the callback never starts against an
-        // empty buffer (which sounds like sputtering).
-        const PRIME_MS: usize = 200;
-
         while let Some(frame) = audio_rx.recv().await {
+            // How many samples to accumulate before letting cpal start
+            // pulling from the buffer at all, so the callback never starts
+            // against an empty buffer (which sounds like sputtering).
+            // Tracks the server's live buffer_ms rather than a fixed
+            // constant - a hardcoded value here would itself become the
+            // bottleneck once buffer_ms drops below it, and could cause a
+            // startup hiccup. Half of buffer_ms, with a small floor so it's
+            // never literally zero.
+            let prime_ms = (buffer_ms.load(Ordering::Relaxed) / 2).clamp(20, 300) as usize;
             // Schedule this frame against the server's intended play time,
             // translated into our own clock domain.
             let offset_usec = time_provider.lock().unwrap().diff_to_server_usec();
@@ -144,13 +148,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if stream_handle.is_none() {
                 let primed_len =
-                    frame.sample_rate as usize * frame.channels as usize * PRIME_MS / 1000;
+                    frame.sample_rate as usize * frame.channels as usize * prime_ms / 1000;
                 if buffer_for_audio.lock().unwrap().len() < primed_len {
                     continue;
                 }
 
                 println!(
-                    "opening cpal stream: {} Hz, {} ch (primed with {PRIME_MS}ms)",
+                    "opening cpal stream: {} Hz, {} ch (primed with {prime_ms}ms)",
                     frame.sample_rate, frame.channels
                 );
                 let stream_config = cpal::StreamConfig {
