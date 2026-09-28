@@ -148,18 +148,22 @@ state of MVP0.
   its own uncertain cleanup semantics, worth its own dedicated look
   rather than bolting on here.
 * `buffer_ms` is a hardcoded value in the Ubuntu box's `/etc/snapserver.conf`,
-  found by hand rather than calculated - confirmed to be a genuine
-  network/OS-scheduling jitter floor (both the custom `sync-client` and the
-  stock upstream `snapclient` XRUN continuously at 100ms, ruling out an
-  application bug), not yet automated since only one agent (the Ubuntu box)
-  is on WiFi so far. Manually tuned to 132ms (down from a 200ms starting
-  point) - held up glitch-free including under a real
-  walk-around-the-room/behind-a-wall WiFi stress test - but later started
-  sputtering again with no code or config change on either side, and had to
-  be raised to 140ms. A real, observed instance of the WiFi-jitter-drifts
-  risk DESIGN.md section 15 already flagged, not a one-off fluke - a fixed
-  value isn't guaranteed to keep holding. See that section for the options
-  on the table for when a fixed value stops being good enough.
+  found by hand rather than calculated, currently **80ms** (down from a 200ms
+  starting point). The path there went through several real local fixes
+  (WiFi power-save was on; `rtkit-daemon` was racing PipeWire's boot-time
+  startup and losing, leaving its audio thread at ordinary scheduling
+  priority instead of real-time) that each bought back a few milliseconds
+  but left most of the gap unexplained - until a `tcpdump` capture of the
+  real PC -> snapserver traffic during sustained playback directly measured
+  actual network jitter at under 50ms max, conclusively ruling out the
+  network as the dominant factor. The real culprit was local: `snapclient`'s
+  own ALSA hardware buffer (`buffer_time`, defaulting to 80ms, independent of
+  and in addition to `buffer_ms`) - reduced to 20ms via
+  `~/.config/systemd/user/snapclient.service`, which let `buffer_ms` itself
+  drop from 130ms to a clean 80ms. Not yet automated (only one agent is on
+  WiFi so far) and still a manually-found fixed value, not calculated - see
+  DESIGN.md section 15 for the full investigation and the options on the
+  table for when a fixed value stops being good enough.
 * `snapserver`'s `tcp` source in `mode=server` does not gracefully handle
   a second producer connecting while one is already active - the second
   connection's bytes just queue up unread rather than being rejected or
