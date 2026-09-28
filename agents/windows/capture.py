@@ -9,6 +9,7 @@ contracts - this module only needs to keep producing raw PCM chunks.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -69,8 +70,12 @@ class WasapiLoopbackCapture:
             self._stream.close()
         self._pa.terminate()
 
-    def chunks(self) -> Iterator[bytes]:
-        """Yields raw PCM chunks until the stream is closed or interrupted."""
+    def chunks(self, stop_when: threading.Event | None = None) -> Iterator[bytes]:
+        """Yields raw PCM chunks until the stream is closed, interrupted, or
+        `stop_when` is set (used to restart the pipeline against a new
+        default device when the sync toggle flips - see main.py)."""
         assert self._stream is not None, "use within a `with` block"
         while self._stream.is_active():
+            if stop_when is not None and stop_when.is_set():
+                return
             yield self._stream.read(self._frames_per_buffer, exception_on_overflow=False)

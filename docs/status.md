@@ -134,6 +134,20 @@ state of MVP0.
   no latency model - all explicitly out of scope until their milestone
   (MVP4/MVP5 in DESIGN.md section 22).
 * macOS/Linux/Android/iOS agents don't exist yet (MVP2/MVP3/MVP6).
+* `WasapiLoopbackCapture.chunks()`'s cooperative cancellation
+  (`stop_when`, used to restart the pipeline when the sync toggle
+  flips) only gets checked *between* reads, and a single blocking
+  `stream.read()` on real hardware took as long as ~27s to return during
+  genuine silence in testing (Windows' audio engine appears to idle down
+  when there's nothing to capture, and loopback reads don't unblock
+  until it wakes up). Confirmed instant (sub-second) when actual audio
+  is playing, which is the toggle's real use case, so left as-is for
+  now - but toggling while the PC is completely silent can be slow to
+  take effect. A proper fix would read on a background thread with its
+  own timeout, decoupled from the generator; not done yet because
+  forcibly interrupting a blocked native read from another thread has
+  its own uncertain cleanup semantics, worth its own dedicated look
+  rather than bolting on here.
 * `snapserver`'s `tcp` source in `mode=server` does not gracefully handle
   a second producer connecting while one is already active - the second
   connection's bytes just queue up unread rather than being rejected or

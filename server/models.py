@@ -61,6 +61,10 @@ class Device(SQLModel, table=True):
     agent_endpoint: str | None = None  # host:port the agent can be reached at, if any
     last_seen: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
+    # Windows-only capability for now (DESIGN.md section 15): route this
+    # device's local output through a virtual audio interface + a
+    # synced Snapcast client instead of playing the instant original.
+    sync_enabled: bool = Field(default=False)
 
     sources: List["Source"] = Relationship(back_populates="device")
     sinks: List["Sink"] = Relationship(back_populates="device")

@@ -36,3 +36,7 @@ class RouteCreate(BaseModel):
     source_id: str
     sink_ids: list[str] = []
     zone_ids: list[str] = []
+
+
+class DeviceSyncUpdate(BaseModel):
+    enabled: bool

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from server.api.schemas import DeviceCreate
+from server.api.schemas import DeviceCreate, DeviceSyncUpdate
 from server.broadcast import broadcast_state
 from server.models import Device, Route, RouteSink, Sink, Source
 from server.persistence.db import get_session
@@ -44,6 +44,27 @@ async def heartbeat(device_id: str, session: Session = Depends(get_session)) -> 
         raise HTTPException(404, f"unknown device {device_id!r}")
     device.status = "online"
     device.last_seen = datetime.now(timezone.utc)
+    session.add(device)
+    session.commit()
+    session.refresh(device)
+    await broadcast_state(session)
+    return device
+
+
+@router.put("/{device_id}/sync")
+async def set_device_sync(
+    device_id: str, body: DeviceSyncUpdate, session: Session = Depends(get_session)
+) -> Device:
+    """Toggles synced local playback (DESIGN.md section 15) for this
+    device. Windows-only for now - it's a capability, not every device
+    has it (section 3.3), so anything else is rejected rather than
+    silently accepted and ignored."""
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(404, f"unknown device {device_id!r}")
+    if device.platform != "windows":
+        raise HTTPException(400, f"sync toggle is not supported on platform {device.platform!r}")
+    device.sync_enabled = body.enabled
     session.add(device)
     session.commit()
     session.refresh(device)

@@ -6,6 +6,7 @@ export interface Device {
   platform: string;
   mode: "central" | "local";
   status: "online" | "offline";
+  sync_enabled: boolean;
 }
 
 export interface Source {

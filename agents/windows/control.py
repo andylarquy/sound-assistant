@@ -34,9 +34,10 @@ class ControlPlaneClient:
         resp.raise_for_status()
         return resp.json()
 
-    def heartbeat(self, device_id: str) -> None:
+    def heartbeat(self, device_id: str) -> dict:
         resp = self._client.post(f"/api/devices/{device_id}/heartbeat")
         resp.raise_for_status()
+        return resp.json()
 
     def close(self) -> None:
         self._client.close()

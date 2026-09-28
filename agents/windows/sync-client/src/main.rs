@@ -1,7 +1,9 @@
-//! Validation spike: does `snapcast-client` actually work against our real
-//! snapserver? Connects, receives the `pc` stream, decodes it, and plays it
-//! out this PC's normal default output device (NOT VB-CABLE yet - that's a
-//! separate concern for later).
+//! Custom Snapcast client for the Windows sync toggle (DESIGN.md section
+//! 15). Connects to a real snapserver, decodes the stream, and plays it
+//! to a specific output device - normally the *real* hardware device,
+//! since the whole point of this toggle is that the system default has
+//! been switched to VB-CABLE and `capture.py` is now capturing from
+//! there instead (see agents/windows/sync_controller.py).
 //!
 //! The crate's public `audio_rx` path forwards decoded audio immediately,
 //! with no reference to the server's clock offset or buffer setting (its
@@ -16,21 +18,60 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use snapcast_client::{ClientConfig, ClientEvent, SnapClient};
 
+#[derive(Parser)]
+struct Args {
+    /// snapserver host
+    #[arg(long, default_value = "192.168.1.4")]
+    host: String,
+
+    /// snapserver stream port
+    #[arg(long, default_value_t = 1704)]
+    port: u16,
+
+    /// Output device name (substring match, case-insensitive). Defaults
+    /// to whatever the OS currently considers the default output device -
+    /// which is the *wrong* thing once the sync toggle has switched that
+    /// to VB-CABLE, so the toggle always passes this explicitly.
+    #[arg(long)]
+    device: Option<String>,
+
+    /// Client name sent to the server in the Snapcast Hello handshake.
+    #[arg(long, default_value = "sound-assistant-sync-client")]
+    client_name: String,
+}
+
+fn device_name(device: &cpal::Device) -> String {
+    device
+        .description()
+        .map(|d| d.name().to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string())
+}
+
+fn find_output_device(host: &cpal::Host, name_substring: &str) -> cpal::Device {
+    let needle = name_substring.to_lowercase();
+    host.output_devices()
+        .expect("failed to enumerate output devices")
+        .find(|d| device_name(d).to_lowercase().contains(&needle))
+        .unwrap_or_else(|| panic!("no output device matching {name_substring:?}"))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let host = std::env::args().nth(1).unwrap_or_else(|| "192.168.1.4".to_string());
+    let args = Args::parse();
+    let host = args.host;
 
     let config = ClientConfig {
         host: host.clone(),
-        port: 1704,
-        client_name: "sound-assistant-rs-spike".to_string(),
+        port: args.port,
+        client_name: args.client_name,
         ..Default::default()
     };
 
-    println!("connecting to snapserver at {host}:1704 ...");
+    println!("connecting to snapserver at {host}:{} ...", args.port);
     let (mut client, mut events, mut audio_rx) = SnapClient::new(config);
 
     // Cloned out before client.run() takes &mut client, so the audio task
@@ -56,11 +97,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut opened_channels: Option<u16> = None;
 
     let buffer_for_audio = buffer.clone();
+    let device_filter = args.device;
     let audio_task = tokio::spawn(async move {
         let cpal_host = cpal::default_host();
-        let device = cpal_host
-            .default_output_device()
-            .expect("no default output device");
+        let device = match &device_filter {
+            Some(name) => find_output_device(&cpal_host, name),
+            None => cpal_host
+                .default_output_device()
+                .expect("no default output device"),
+        };
+        println!("output device: {}", device_name(&device));
 
         // How many samples to accumulate before letting cpal start pulling
         // from the buffer at all, so the callback never starts against an

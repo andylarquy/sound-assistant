@@ -7,6 +7,7 @@ import { SourceList } from "./components/SourceList/SourceList";
 import { StatusBadge } from "./components/StatusBadge/StatusBadge";
 import { useAppState } from "./state/StateProvider";
 import { RouteService } from "./services/route.service"
+import { DeviceService } from "./services/device.service"
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : "Request failed");
 
@@ -38,6 +39,11 @@ export function App() {
     RouteService.stopRoute(id).catch((e) => setError(messageOf(e)));
   };
 
+  const toggleSync = (deviceId: string, enabled: boolean) => {
+    setError("");
+    DeviceService.setSync(deviceId, enabled).catch((e) => setError(messageOf(e)));
+  };
+
   return (
     <>
       <header className={styles.header}>
@@ -51,6 +57,7 @@ export function App() {
             devices={snapshot.devices}
             selectedId={sourceId}
             onSelect={setSourceId}
+            onSyncToggle={toggleSync}
           />
         </Panel>
         <Panel title="Destinations">
