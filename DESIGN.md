@@ -778,6 +778,18 @@ Accepted, not dismissed, risk: the `snapcast-client` crate has 0 GitHub stars - 
 
 **Update: validated, with two real bugs found along the way.** A spike CLI (`agents/windows/sync-client/`) embedding a fork of the crate (`github.com/andylarquy/snapcast-rs`) achieved genuine cross-machine synchronized playback against the real Ubuntu `snapserver`/`snapclient` - confirmed by ear, residual offset under ~100ms. The 0-star risk was real: the crate's non-Unix clock source used wall-clock time instead of a monotonic one (fixed upstream in the fork), and separately its public API bypassed its own internal synchronization scheduler entirely (worked around by scheduling playback ourselves, using the clock offset and buffer setting the crate already exposes publicly). See `docs/status.md` for the full detail. Not yet done: wiring this CLI to VB-CABLE specifically, and the actual enable/disable toggle around it.
 
+### Rejected: building our own virtual audio driver instead of depending on VB-CABLE
+
+Considered explicitly, for the same reason the project forked `snapcast-client` rather than depend on someone else's unmodifiable binary: avoiding a dependency that could be discontinued or paywalled with no recourse. Rejected anyway, because a Windows virtual audio driver is not comparable in risk or effort to a user-mode crate fork:
+
+* **Blast radius.** Every fix made to `snapcast-client` lived in user-mode code - worst case, our own process crashes. A bug in kernel-mode audio driver code can blue-screen the whole machine or corrupt system state, not just our own process. Same category of mistake (a bad index, a race condition), a completely different category of consequence.
+* **Tooling immaturity, specifically for audio.** `windows-drivers-rs` (Microsoft's own effort to bring Rust into kernel driver development) covers general KMDF drivers, but there is no mature Rust reference for the audio-miniport driver class specifically. This would mean porting the logic of Microsoft's C++ "SysVAD" sample driver into unsafe Rust FFI largely from scratch - materially more open-ended than reading and patching an existing crate.
+* **Test-signing isn't free, even for personal use.** Beyond a persistent desktop watermark, machines with Core Isolation/HVCI enabled (increasingly the Windows 11 default) can block test-signed kernel drivers outright unless that protection is also weakened - a real adoption cost for anyone other than the original developer.
+* **Debugging requires a skill set nothing else in this project needs** - kernel debugging (WinDbg, ideally a second machine or VM), rather than anything used so far.
+* **The problem it would solve is low-probability and already has a fallback.** VB-CABLE has been stable and free for over a decade. If it ever were discontinued or paywalled, Synchronous Audio Router (open-source, GPL-3.0, evaluated above) is a known, already-vetted alternative.
+
+Decision: not worth the effort/risk against a low-probability problem that already has a fallback. If ever revisited, it should be the very last thing this project tackles - after everything else is otherwise complete - not folded into the sync-toggle work.
+
 ---
 
 # 16. Guest access
