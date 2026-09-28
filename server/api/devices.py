@@ -21,15 +21,22 @@ def list_devices(session: Session = Depends(get_session)) -> list[Device]:
 @router.post("")
 async def register_device(body: DeviceCreate, session: Session = Depends(get_session)) -> Device:
     """Devices call this on agent startup to announce themselves (and
-    again periodically as a heartbeat - see PATCH .../heartbeat)."""
-    device = Device(
-        name=body.name,
-        platform=body.platform,
-        agent_endpoint=body.agent_endpoint,
-        mode=body.mode,
-        status="online",
-        last_seen=datetime.now(timezone.utc),
-    )
+    again periodically as a heartbeat - see PATCH .../heartbeat).
+
+    Upserts on (name, platform) rather than always inserting - an agent
+    restarting (the same physical machine, same hostname-derived name)
+    should reuse its existing device, not pile up a fresh duplicate every
+    time. Duplicates weren't just a UI annoyance: with the sync toggle,
+    each one is a real route target, so restarting the agent a few times
+    meant actually hearing the same PC audio multiple times over."""
+    existing = session.exec(
+        select(Device).where(Device.name == body.name, Device.platform == body.platform)
+    ).first()
+    device = existing or Device(name=body.name, platform=body.platform)
+    device.agent_endpoint = body.agent_endpoint
+    device.mode = body.mode
+    device.status = "online"
+    device.last_seen = datetime.now(timezone.utc)
     session.add(device)
     session.commit()
     session.refresh(device)

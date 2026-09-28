@@ -20,9 +20,17 @@ def list_sources(session: Session = Depends(get_session)) -> list[Source]:
 async def create_source(
     device_id: str, body: SourceCreate, session: Session = Depends(get_session)
 ) -> Source:
+    """Upserts on (device_id, name) - same reasoning as register_device:
+    an agent re-registering its source on every restart shouldn't leave
+    a fresh duplicate behind each time."""
     if session.get(Device, device_id) is None:
         raise HTTPException(404, f"unknown device {device_id!r}")
-    source = Source(device_id=device_id, **body.model_dump())
+    existing = session.exec(
+        select(Source).where(Source.device_id == device_id, Source.name == body.name)
+    ).first()
+    source = existing or Source(device_id=device_id, name=body.name, kind=body.kind)
+    source.kind = body.kind
+    source.transport_ref = body.transport_ref
     session.add(source)
     session.commit()
     session.refresh(source)
