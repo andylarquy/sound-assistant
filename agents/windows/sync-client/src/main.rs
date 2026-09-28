@@ -16,7 +16,7 @@
 
 use std::collections::VecDeque;
 use std::io::Write;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use clap::Parser;
@@ -118,7 +118,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut opened_rate: Option<u32> = None;
     let mut opened_channels: Option<u16> = None;
 
+    // Incremented (cheap, non-blocking) from cpal's realtime callback
+    // whenever it pulls from an empty buffer and pads with silence -
+    // doing any I/O directly on that thread would risk causing exactly
+    // the glitch it's meant to report. Checked and logged from the
+    // ordinary async loop below instead, which is fine to block briefly.
+    let underrun_samples: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+
     let buffer_for_audio = buffer.clone();
+    let underrun_for_audio = underrun_samples.clone();
     let device_filter = args.device;
     let audio_task = tokio::spawn(async move {
         let cpal_host = cpal::default_host();
@@ -131,6 +139,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log!("output device: {}", device_name(&device));
 
         while let Some(frame) = audio_rx.recv().await {
+            let underruns = underrun_for_audio.swap(0, Ordering::Relaxed);
+            if underruns > 0 {
+                log_err!("buffer underrun: {underruns} samples were silence since last check");
+            }
+
             // How many samples to accumulate before letting cpal start
             // pulling from the buffer at all, so the callback never starts
             // against an empty buffer (which sounds like sputtering).
@@ -185,13 +198,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     buffer_size: cpal::BufferSize::Default,
                 };
                 let cb_buffer = buffer_for_audio.clone();
+                let cb_underruns = underrun_samples.clone();
                 let stream = device
                     .build_output_stream(
                         stream_config,
                         move |data: &mut [f32], _| {
                             let mut buf = cb_buffer.lock().unwrap();
+                            let mut missing = 0u64;
                             for sample in data.iter_mut() {
-                                *sample = buf.pop_front().unwrap_or(0.0);
+                                *sample = buf.pop_front().unwrap_or_else(|| {
+                                    missing += 1;
+                                    0.0
+                                });
+                            }
+                            if missing > 0 {
+                                cb_underruns.fetch_add(missing, Ordering::Relaxed);
                             }
                         },
                         |err| log_err!("cpal stream error: {err}"),
